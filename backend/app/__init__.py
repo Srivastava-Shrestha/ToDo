@@ -4,6 +4,7 @@ from flask_security import SQLAlchemyUserDatastore
 from app.config import BASE_DIR, CONFIG_MAP
 from app.extensions import cors, db, security
 from app.models import Role, User
+from app.routes import auth_bp
 
 user_datastore = SQLAlchemyUserDatastore(db, User, Role)
 
@@ -24,6 +25,8 @@ def create_app(config_name: str = "default") -> Flask:
         expose_headers=["Authentication-Token"],
         allow_headers=["Content-Type", "Authentication-Token", "Authorization"],
     )
+
+    app.register_blueprint(auth_bp)
 
     @app.get("/api/health")
     def health_check():

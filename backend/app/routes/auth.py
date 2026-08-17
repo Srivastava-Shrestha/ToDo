@@ -1,6 +1,7 @@
+import uuid
 from email_validator import EmailNotValidError, validate_email
 from flask import Blueprint, current_app, jsonify, request
-from flask_security import hash_password
+from flask_security import auth_required, current_user, hash_password, verify_password
 from app.extensions import db
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -62,3 +63,46 @@ def register():
         ),
         201,
     )
+
+
+@auth_bp.post("/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    if not email or not password:
+        return jsonify({"error": "Email and password are required."}), 400
+
+    datastore = _get_datastore()
+    user = datastore.find_user(email=email)
+
+    if not user or not user.active or not verify_password(password, user.password):
+        return jsonify({"error": "Invalid email or password."}), 401
+
+    token = user.get_auth_token()
+    return (
+        jsonify(
+            {
+                "message": "Logged in successfully.",
+                "token": token,
+                "user": user.to_dict(),
+            }
+        ),
+        200,
+    )
+
+
+@auth_bp.post("/logout")
+@auth_required("token")
+def logout():
+    current_user.fs_uniquifier = uuid.uuid4().hex
+    db.session.commit()
+    return jsonify({"message": "Logged out successfully."}), 200
+
+
+@auth_bp.get("/me")
+@auth_required("token")
+def get_current_user():
+    return jsonify({"user": current_user.to_dict()}), 200
+
