@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 from flask_security import auth_required, current_user
+from sqlalchemy import case, or_
 from app.extensions import db
 from app.models import Todo
-from app.utils import validate_todo_payload
+from app.utils import VALID_PRIORITIES, validate_todo_payload
 
 todos_bp = Blueprint("todos", __name__, url_prefix="/api/todos")
 
@@ -15,11 +16,43 @@ def _get_user_todo(todo_id: int):
 @todos_bp.get("")
 @auth_required("token")
 def list_todos():
-    todos = (
-        Todo.query.filter_by(user_id=current_user.id)
-        .order_by(Todo.is_completed.asc(), Todo.created_at.desc())
-        .all()
+    query = Todo.query.filter_by(user_id=current_user.id)
+
+    status = (request.args.get("status") or "all").strip().lower()
+    if status == "active":
+        query = query.filter(Todo.is_completed.is_(False))
+    elif status == "completed":
+        query = query.filter(Todo.is_completed.is_(True))
+    elif status != "all":
+        return jsonify({"error": "Status filter must be all, active, or completed."}), 400
+
+    priority = (request.args.get("priority") or "").strip().lower()
+    if priority and priority != "all":
+        if priority not in VALID_PRIORITIES:
+            return jsonify({"error": "Priority filter must be low, medium, or high."}), 400
+        query = query.filter(Todo.priority == priority)
+
+    search = (request.args.get("search") or "").strip()
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(
+            or_(Todo.title.ilike(pattern), Todo.description.ilike(pattern))
+        )
+
+    priority_order = case(
+        {"high": 1, "medium": 2, "low": 3},
+        value=Todo.priority,
+        else_=4,
     )
+
+    todos = query.order_by(
+        Todo.is_completed.asc(),
+        Todo.due_date.is_(None).asc(),
+        Todo.due_date.asc(),
+        priority_order.asc(),
+        Todo.created_at.desc(),
+    ).all()
+
     return jsonify({"todos": [todo.to_dict() for todo in todos]}), 200
 
 
