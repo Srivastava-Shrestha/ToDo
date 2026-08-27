@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from flask import Blueprint, jsonify, request
 from flask_security import auth_required, current_user
 from sqlalchemy import case, or_
@@ -11,6 +11,23 @@ todos_bp = Blueprint("todos", __name__, url_prefix="/api/todos")
 
 def _get_user_todo(todo_id: int):
     return Todo.query.filter_by(id=todo_id, user_id=current_user.id).first()
+
+
+def _compute_user_counts(user_id: int) -> dict:
+    all_todos = Todo.query.filter_by(user_id=user_id).all()
+    today = date.today()
+    total = len(all_todos)
+    completed = sum(1 for t in all_todos if t.is_completed)
+    active = total - completed
+    overdue = sum(
+        1 for t in all_todos if not t.is_completed and t.due_date and t.due_date < today
+    )
+    return {
+        "total": total,
+        "active": active,
+        "completed": completed,
+        "overdue": overdue,
+    }
 
 
 @todos_bp.get("")
@@ -53,7 +70,15 @@ def list_todos():
         Todo.created_at.desc(),
     ).all()
 
-    return jsonify({"todos": [todo.to_dict() for todo in todos]}), 200
+    return (
+        jsonify(
+            {
+                "todos": [todo.to_dict() for todo in todos],
+                "counts": _compute_user_counts(current_user.id),
+            }
+        ),
+        200,
+    )
 
 
 @todos_bp.post("")
@@ -152,4 +177,23 @@ def delete_todo(todo_id: int):
     db.session.delete(todo)
     db.session.commit()
     return jsonify({"message": "Task deleted successfully."}), 200
+
+
+@todos_bp.delete("/completed")
+@auth_required("token")
+def clear_completed_todos():
+    deleted_count = Todo.query.filter_by(
+        user_id=current_user.id, is_completed=True
+    ).delete(synchronize_session=False)
+    db.session.commit()
+    return (
+        jsonify(
+            {
+                "message": f"Cleared {deleted_count} completed task(s).",
+                "deleted_count": deleted_count,
+            }
+        ),
+        200,
+    )
+
 
